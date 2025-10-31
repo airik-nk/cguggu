@@ -115,90 +115,48 @@ def api_docs_list():
 
 @api.post("/docs")
 def api_docs_upload():
+    """
+    上傳單一 PDF 到本系統並（可選）同步至 RAGFlow。
+    RAGFlow 端顯示名稱固定為：<department>-<title>.pdf（有部門才加部門）。
+    """
+    # 1) 取檔案
     f = request.files.get("file")
     if not f:
         return ("請選擇要上傳的 PDF 檔", 400)
-        
-    # 驗證 kb 參數格式 (L122)
-    kb = request.form.get("kb") or request.args.get("kb")
-    if kb and len(kb) > 30:  # 簡單檢查是否可能是 UUID/ID
-        return jsonify({
-            "error": "Invalid KB parameter",
-            "detail": "請使用資料集名稱（例如 'Regulation'）而不是 ID",
-            "code": "INVALID_KB_FORMAT"
-        }), 400
 
-    original_filename = f.filename
-    ext = os.path.splitext(original_filename)[1]
-
-    # --- 修改開始 ---
-    # 1. 優先從表單獲取 title 和 department
-    title = request.form.get("title")
-    department = request.form.get("department")
-
-    # 2. 如果表單沒有提供,才嘗試從檔名解析
-    title_from_filename = None
-    dept_from_filename = None
-
-    if not title or not department:
-        filename_parts = original_filename.split('-', 1)
-        if len(filename_parts) == 2:
-            dept_from_filename = filename_parts[0].strip()
-            title_from_filename = os.path.splitext(filename_parts[1])[0].strip() # 移除副檔名
-    
-    # 3. 確定最終的 title 和 department
-    title = title or title_from_filename
-    department = department or dept_from_filename
-            
-    # 4. 如果兩者都失敗(表單未填, 檔名也不符格式), 才報錯
-    if not title or not department:
-        return jsonify({"error": "無法解析 [處室] 和 [規章名稱]。請在表單中提供，或使用 [處室-規章名稱].pdf 格式的檔名。"}), 400
-    # --- 修改結束 ---
-    
-    # 從原檔名提取文件編號(如果存在)
-    import re
-    doc_no_match = re.search(r'\d+', original_filename)
-    doc_no_from_filename = doc_no_match.group(0) if doc_no_match else None
-    
-    # 使用處室-規章名稱作為新檔名,保留原始副檔名
-    filename = secure_filename(f"{department}-{title}{ext}")
+    filename = secure_filename(f.filename or "unnamed.pdf")
     save_dir = current_app.config["UPLOAD_FOLDER"]
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, filename)
     f.save(save_path)
 
-    # 如果表單中有這些欄位,則使用表單值覆蓋
-    # title 和 department 已經在前面處理過了
-    doc_no = request.form.get("doc_no") or doc_no_from_filename or filename
+    # 2) 表單欄位
+    title           = (request.form.get("title") or Path(filename).stem).strip()
+    department      = (request.form.get("department") or "").strip()
+    doc_no          = (request.form.get("doc_no") or "").strip()
     date_issued_raw = request.form.get("date_issued") or None
-    review_meeting = request.form.get("review_meeting") or None
-    version_code = request.form.get("version_code") or "v1"
-    # kb = request.form.get("kb") or request.args.get("kb") # kb 已在 L122 獲取
+    review_meeting  = request.form.get("review_meeting") or None
+    version_code    = request.form.get("version_code") or "v1"
+    kb              = request.form.get("kb") or request.args.get("kb")  # dataset 名稱/ID
 
-    # chunking 參數(可選) (L164)
-    chunk_method = request.form.get("chunk_method") or request.form.get("chunking_method")
-    chunk_size = request.form.get("chunk_size")
-    chunk_overlap = request.form.get("chunk_overlap")
-    chunk_regex = request.form.get("chunk_regex")
+    # 3) chunking 參數（可選）
+    chunk_method        = request.form.get("chunk_method") or request.form.get("chunking_method")
+    chunk_size          = request.form.get("chunk_size")
+    chunk_overlap       = request.form.get("chunk_overlap")
+    chunk_regex         = request.form.get("chunk_regex")
     chunk_heading_regex = request.form.get("chunk_heading_regex")
-
     parse_options = {}
-    if chunk_method:             parse_options["method"] = chunk_method
-    if chunk_size:               parse_options["size"] = int(chunk_size)
-    if chunk_overlap:            parse_options["overlap"] = int(chunk_overlap)
-    if chunk_regex:              parse_options["pattern"] = chunk_regex
-    if chunk_heading_regex:      parse_options["heading_regex"] = chunk_heading_regex
-    if not parse_options:        parse_options = None
+    if chunk_method:        parse_options["method"] = chunk_method
+    if chunk_size:          parse_options["size"] = int(chunk_size)
+    if chunk_overlap:       parse_options["overlap"] = int(chunk_overlap)
+    if chunk_regex:         parse_options["pattern"] = chunk_regex
+    if chunk_heading_regex: parse_options["heading_regex"] = chunk_heading_regex
+    if not parse_options:   parse_options = None
 
-    # 是否同步到 RAGFlow (L180)
-    sync_to_ragflow = (request.form.get("sync_to_ragflow") or "").lower() in (
-        "1",
-        "true",
-        "on",
-        "yes",
-    )
+    # 4) 是否同步至 RAGFlow
+    sync_to_ragflow = (request.form.get("sync_to_ragflow") or "").lower() in ("1", "true", "on", "yes")
 
-    # DB 寫入 (L188)
+    # 5) 寫入本地 DB
     doc = Document(
         title=title,
         department=department,
@@ -218,47 +176,41 @@ def api_docs_upload():
     db.session.add(ver)
     db.session.commit()
 
-    # 同步到 RAGFlow(依 kb 切換 dataset) (L210)
+    # 6) 組 RAGFlow 顯示名稱：<dept>-<title>.pdf（有部門才加；副檔名避免重覆）
+    ext = Path(save_path).suffix or ""
+    dep = department.strip()
+    use_dep = bool(dep and dep.lower() != "unknown")
+    rag_base = f"{dep}-{title}" if use_dep else title
+    rag_display_name = rag_base if (ext and rag_base.lower().endswith(ext.lower())) else f"{rag_base}{ext}"
+
+    # 7) 同步到 RAGFlow（依 kb 切換 dataset）
     rag_result = {"success": False, "error": "not synced"}
     if sync_to_ragflow:
-        try:
-            rag_result = upload_and_parse_file(
-                save_path,
-                title=title,
-                dataset_name=kb,
-                parse_options=parse_options,
-            )
-        except Exception as e:
-            rag_result = {"success": False, "error": str(e)}
-
-    # 記錄「最近 10 筆上傳」 (L223)
-    # ext = Path(save_path).suffix # ext 已在 L131 獲取
-    display_name = f"{title}{ext}" if title and ext and not str(title).endswith(ext) else title
-    if sync_to_ragflow:
-        _append_upload_log(
-            kb=kb,
-            doc_no=doc_no,
-            title=title,
-            display_name=display_name,
-            rag_doc_id=rag_result.get("doc_ids", [None])[0],
-            rag_status=(
-                "SUCCESS" if rag_result.get("success") else "ERROR"
-            ),
-        )
-    else:
-        _append_upload_log(
-            kb=kb,
-            doc_no=doc_no,
-            title=title,
-            display_name=display_name,
-            rag_doc_id=None,
-            rag_status="NOT_SYNCED",
+        rag_result = upload_and_parse_file(
+            save_path,
+            title=rag_display_name,        # ← 關鍵：用我們組好的 <部門>-<標題>.pdf
+            dataset_name=kb,
+            parse_options=parse_options,
         )
 
     return (
         jsonify(
             {
-                "message": f"已上傳:{title}(版本 {version_code})",
+                "message": f"已上傳：{title}（版本 {version_code}）",
+                "doc": {
+                    "id": doc.id,
+                    "title": doc.title,
+                    "department": doc.department,
+                    "doc_no": doc.doc_no,
+                    "date_issued": doc.date_issued.isoformat() if doc.date_issued else None,
+                    "review_meeting": doc.review_meeting,
+                },
+                "version": {
+                    "id": ver.id,
+                    "file_path": ver.file_path,
+                    "date_issued": ver.date_issued.isoformat() if ver.date_issued else None,
+                    "is_active": ver.is_active,
+                },
                 "ragflow": rag_result,
             }
         ),
@@ -270,64 +222,51 @@ def api_docs_upload():
 @api.post("/ragflow/upload")
 def api_ragflow_direct_upload():
     """
-    前端逐筆呼叫此端點把檔案直接上傳到 RAG Flow。
-    - multipart/form-data:
-        - file: 檔案 (必填)
-        - display_name: 顯示名稱(CSV 的「法規名稱」)
-        - department: 部門(可空)
-        - last_update: 最後更新日期(字串,建議 YYYY-MM-DD;原樣寫入 metadata)
-        - file_type: 檔案型態(預設 pdf)
-        - kb: 指定 dataset 名稱(如 'Regulation';可空,走預設)
-    - 成功回傳 { ok: True, result: {...} }
+    把單一檔案直接上傳到 RAGFlow（不上本地 DB、不觸發解析）。
+    RAGFlow 顯示名稱固定為：<department>-<title>.pdf（有部門才加）。
+    multipart/form-data:
+      - file: 檔案 (必填)
+      - display_name/title: 顯示名稱（擇一；CSV 的「法規名稱」）
+      - department: 部門（可空）
+      - last_update: 最後更新日期（字串，原樣入 metadata）
+      - file_type: 檔案型態（預設 "pdf"）
+      - kb: dataset 名稱或 ID（可空＝用預設）
     """
     if "file" not in request.files:
         return ("missing file", 400)
-        
-    # 驗證 kb 參數格式
-    kb = (request.form.get("kb") or request.args.get("kb") or "").strip() or None
-    if kb and len(kb) > 30:  # 簡單檢查是否可能是 UUID/ID
-        return jsonify({
-            "error": "Invalid KB parameter",
-            "detail": "請使用資料集名稱（例如 'Regulation'）而不是 ID",
-            "code": "INVALID_KB_FORMAT"
-        }), 400
 
     up = request.files["file"]
-    display_name = (request.form.get("display_name") or up.filename or "").strip()
-    department   = (request.form.get("department") or "").strip()
-    last_update  = (request.form.get("last_update") or "").strip()
-    file_type    = (request.form.get("file_type") or "pdf").strip().lower() or "pdf"
-    kb           = (request.form.get("kb") or request.args.get("kb") or "").strip() or None
-    doc_no       = (request.form.get("doc_no") or "").strip() or None
+    filename = secure_filename(up.filename or "unnamed.pdf")
+    ext = Path(filename).suffix
 
-    if not display_name:
-        display_name = secure_filename(up.filename or "unnamed.pdf")
+    # 取欄位
+    display_raw = (request.form.get("display_name")
+                   or request.form.get("title")
+                   or Path(filename).stem).strip()
+    department  = (request.form.get("department") or "").strip()
+    last_update = (request.form.get("last_update") or "").strip()
+    file_type   = (request.form.get("file_type") or "pdf").strip()
+    kb          = request.form.get("kb") or request.args.get("kb")
 
-    # 讀入記憶體後以 BytesIO 傳給 RAG Flow(避免落地)
-    raw = up.read()
+    # 組顯示名稱：<dept>-<display_raw>.ext（有部門才加；避免重覆副檔名）
+    base = f"{department}-{display_raw}" if department else display_raw
+    display_name = base if (ext and base.lower().endswith(ext.lower())) else f"{base}{ext}"
+
     try:
-        from io import BytesIO
+        raw = up.read()
         result = upload_file_to_ragflow(
             file_stream=BytesIO(raw),
-            filename=secure_filename(up.filename or display_name),
-            display_name=display_name,
-            department=department,
+            filename=filename,
+            display_name=display_name,            # ← 關鍵
+            department=department or None,
             dataset=kb,
-            extra_metadata={
-                "last_update": last_update,
-                "file_type": file_type or "pdf",
-            },
-        )
-        # 記錄到 UploadLog(視為 PENDING)
-        _append_upload_log(
-            kb=kb, doc_no=doc_no, title=display_name,
-            display_name=display_name, rag_doc_id=None,
-            rag_status="PENDING"
+            extra_metadata={"last_update": last_update, "file_type": file_type},
         )
         return jsonify({"ok": True, "result": result or {}}), 200
     except Exception as e:
         current_app.logger.exception("RAGFlow direct upload error")
         return (f"upload error: {e}", 500)
+
 
 
 @api.post("/versions/<int:version_id>/toggle")
@@ -769,18 +708,38 @@ def api_llm_analyze_doc():
             ],
             response_format={"type": "json_object"}
         )
+        
+        # [修改] 增加安全檢查，防止 resp.choices[0] 崩潰
+        if not resp.choices or not resp.choices[0].message.content:
+            print("⚠️ Chat API returned empty choices, falling back.")
+            raise RuntimeError("Empty choices from Chat API") # 強制觸發 fallback
+            
         suggestion = resp.choices[0].message.content
+
     except Exception as e:
         print("⚠️ Chat API 不存在,改用 completions API:", e)
-        resp = client.completions.create(
-            model="meta-llama/Llama-3.3-70B-Instruct",
-            prompt=f"你是文件上傳分析助手,輸出嚴格 JSON。\n\n使用者需求:\n{prompt}",
-            max_tokens=1024
-        )
-        suggestion = resp.choices[0].text
+        
+        # [修改] 增加巢狀 try...except 來捕捉 fallback 失敗
+        try:
+            resp = client.completions.create(
+                model="meta-llama/Llama-3.3-70B-Instruct",
+                prompt=f"你是文件上傳分析助手,輸出嚴格 JSON。\n\n使用者需求:\n{prompt}",
+                max_tokens=1024
+            )
+            
+            # [修改] 增加安全檢查
+            if not resp.choices or not resp.choices[0].text:
+                print("⚠️ Completions API also returned empty choices.")
+                raise RuntimeError("Empty choices from Completions API")
+
+            suggestion = resp.choices[0].text
+            
+        except Exception as e2:
+            # [修改] 如果 fallback 也失敗，安全地回傳 JSON 錯誤
+            current_app.logger.error(f"LLM analysis failed on fallback: {e2}", exc_info=True)
+            return jsonify({"success": False, "error": f"LLM analysis failed (Chat: {e}; Fallback: {e2})"}), 500
 
     return jsonify({"success": True, "suggestion": suggestion})
-
 
 @api.get("/ragflow/kb")
 def api_ragflow_kb_list():

@@ -5,7 +5,8 @@ export const DEPARTMENTS = [
   '輔導室',
   '圖書館',
   '人事室',
-  '主計室'
+  '主計室',
+  '研發處'
 ] as const;
 
 export type Department = typeof DEPARTMENTS[number];
