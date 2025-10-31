@@ -1,0 +1,63 @@
+/* ========== 基礎 ==========
+   不需要任何外部套件 */
+:root{
+  --bg: #0b1220;
+  --panel: #0f172a;
+  --muted: #9aa4b2;
+  --text: #e5e7eb;
+  --primary: #3b82f6;
+  --primary-600:#2563eb;
+  --border: #1f2a44;
+  --ok-bg:#063f2e; --ok:#34d399;
+  --warn-bg:#382b02; --warn:#f59e0b;
+  --bad:#ef4444;
+  --radius: 14px;
+  --shadow: 0 10px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html,body,#root{height:100%}
+body{margin:0;background:linear-gradient(180deg,#0b1220,#0b1220 30%,#0e1526);color:var(--text);font:14px/1.6 system-ui, Segoe UI, Roboto, Noto Sans TC, Arial, sans-serif;}
+
+/* ========== 版面 ========== */
+.container{max-width:1100px;margin:0 auto;padding:28px;}
+.header{display:flex;justify-content:space-between;align-items:center;margin:12px 0 22px;}
+.h1{font-size:28px;font-weight:800;letter-spacing:.3px;margin:0}
+.sub{color:var(--muted);font-size:12px;margin-top:4px}
+
+/* ========== 卡片 & 面板 ========== */
+.card{background:linear-gradient(180deg,#101a33,#0f172a);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+.card-pad{padding:14px 16px;}
+.section-title{font-weight:700;margin:0 0 10px 2px}
+
+/* ========== 表格 ========== */
+.table-wrap{overflow:auto;border-radius:12px;border:1px solid var(--border)}
+.table{width:100%;border-collapse:separate;border-spacing:0}
+.table th,.table td{padding:12px 14px;border-bottom:1px solid var(--border)}
+.table thead th{position:sticky;top:0;background:#0f1a33;color:#cbd5e1;text-align:left;font-weight:700}
+.table tbody tr:hover{background:rgba(59,130,246,.06)}
+
+/* ========== 表單 ========== */
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.label{display:flex;flex-direction:column;gap:6px;color:#cbd5e1;font-size:13px}
+.input{padding:10px 12px;border:1px solid var(--border);background:#0b1220;color:var(--text);border-radius:10px;outline:none}
+.input:focus{border-color:#4461ff;box-shadow:0 0 0 3px rgba(68,97,255,.18)}
+
+/* ========== 按鈕 ========== */
+.btn{padding:9px 14px;border-radius:12px;border:1px solid var(--border);background:#111a33;color:var(--text);cursor:pointer;transition:.15s}
+.btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(0,0,0,.25)}
+.btn-primary{background:linear-gradient(180deg,var(--primary),var(--primary-600));border:0}
+.btn-danger{color:#ffd2d2;border-color:#6b1d1d;background:#2a0f12}
+.btn-xs{padding:6px 10px;border-radius:10px;font-size:12px}
+
+/* ========== 狀態徽章 ========== */
+.badge{display:inline-flex;gap:6px;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border)}
+.badge.ok{background:var(--ok-bg);color:var(--ok)}
+.badge.muted{background:#101827;color:#cbd5e1}
+
+/* ========== Modal ========== */
+.modal{position:fixed;inset:0;background:rgba(6,10,20,.6);display:flex;align-items:center;justify-content:center;padding:16px;z-index:40}
+.modal .panel{width:min(720px,100%);background:linear-gradient(180deg,#0e1630,#0e1526);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);padding:18px}
+
+/* 其它 */
+.row-end{display:flex;justify-content:flex-end;gap:8px}
+.center{padding:24px;color:var(--muted);text-align:center}

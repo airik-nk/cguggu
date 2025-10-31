@@ -1,0 +1,393 @@
+// src/api.ts
+const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/+$/, "");
+
+import type {
+  DocsListItem,
+  RagStatus,
+  RagDocItem,
+  FileItem,
+  UploadResponse,
+} from "./api/types";
+
+interface KbOpts {
+  kb?: string;
+  limit?: number;
+}
+
+const handleResponse = async <T>(response: Response): Promise<T> => {
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API Error: ${response.status} ${response.statusText}\n${errorText}`);
+  }
+  return response.json();
+};
+
+// API 函數
+export const fetchDocs = async (opts?: KbOpts): Promise<DocsListItem[]> => {
+  const url = new URL(`${API_BASE}/api/docs`);
+  if (opts?.kb) url.searchParams.set('kb', opts.kb);
+  const response = await fetch(url.toString());
+  return handleResponse<DocsListItem[]>(response);
+};
+
+export const uploadDoc = async (formData: FormData, opts?: KbOpts): Promise<UploadResponse> => {
+  const url = new URL(`${API_BASE}/api/docs`);
+  if (opts?.kb) formData.append('kb', opts.kb);
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    body: formData
+  });
+  return handleResponse<UploadResponse>(response);
+};
+
+export const fetchFiles = async (): Promise<FileItem[]> => {
+  const response = await fetch(`${API_BASE}/api/files`);
+  return handleResponse<FileItem[]>(response);
+};
+
+export const toggleVersion = async (versionId: number): Promise<void> => {
+  const response = await fetch(`${API_BASE}/api/versions/${versionId}/toggle`, {
+    method: 'POST'
+  });
+  return handleResponse<void>(response);
+};
+
+export const deleteDoc = async (docId: number | string, opts?: KbOpts): Promise<void> => {
+  const url = new URL(`${API_BASE}/api/docs/${docId}`);
+  if (opts?.kb) url.searchParams.set('kb', opts.kb);
+  const response = await fetch(url.toString(), { method: 'DELETE' });
+  return handleResponse<void>(response);
+};
+
+export const getRagStatus = async (docId: number, opts?: KbOpts): Promise<RagStatus> => {
+  const url = new URL(`${API_BASE}/api/docs/${docId}/ragflow`);
+  if (opts?.kb) url.searchParams.set('kb', opts.kb);
+  const response = await fetch(url.toString());
+  return handleResponse<RagStatus>(response);
+};
+
+export const resyncRag = async (
+  docId: number,
+  opts?: KbOpts
+): Promise<{ success: boolean; parsed_ids?: string[]; error?: string }> => {
+  const url = new URL(`${API_BASE}/api/docs/${docId}/ragflow/resync`);
+  if (opts?.kb) url.searchParams.set('kb', opts.kb);
+  const response = await fetch(url.toString(), { method: 'POST' });
+  return handleResponse(response);
+};
+
+export const fetchRagDocs = async (q?: string, opts?: KbOpts): Promise<RagDocItem[]> => {
+  const url = new URL(`${API_BASE}/api/ragflow/docs`);
+  if (opts?.kb) url.searchParams.set('kb', opts.kb);
+  if (opts?.limit) url.searchParams.set('limit', String(opts.limit));
+  if (q) url.searchParams.set('q', q);
+  const response = await fetch(url.toString());
+  return handleResponse<RagDocItem[]>(response);
+};
+
+/** ───────────────────────── API Functions ───────────────────────── */
+
+// 取得文件列表
+export const fetchDocs = (opts?: KbOpts): Promise<DocsListItem[]> => {
+  const u = withKb(toURL('/api/docs'), opts?.kb);
+  return safeFetch<DocsListItem[]>(u.toString());
+};
+
+// 上傳文件
+export const uploadDoc = async (formData: FormData, opts?: KbOpts): Promise<UploadResponse> => {
+  ensureKbInForm(formData, opts?.kb);
+  const u = toURL('/api/docs');
+  return safeFetch<UploadResponse>(u.toString(), {
+    method: 'POST',
+    body: formData
+  });
+};
+
+// 取得檔案列表
+export const fetchFiles = async (): Promise<FileItem[]> => {
+  const u = toURL('/api/files');
+  return safeFetch<FileItem[]>(u.toString());
+};
+
+// 切換版本狀態
+export const toggleVersion = async (versionId: number): Promise<void> => {
+  const u = toURL(`/versions/${versionId}/toggle`);
+  return safeFetch(u.toString(), { method: 'POST' });
+};
+
+// 刪除文件
+export const deleteDoc = async (docId: number | string, opts?: KbOpts): Promise<void> => {
+  const u = withKb(toURL(`/api/docs/${docId}`), opts?.kb);
+  return safeFetch(u.toString(), { method: 'DELETE' });
+};
+
+// 取得 RAG 狀態
+export const getRagStatus = async (docId: number, opts?: KbOpts): Promise<RagStatus> => {
+  const u = withKb(toURL(`/api/docs/${docId}/ragflow`), opts?.kb);
+  return safeFetch<RagStatus>(u.toString());
+};
+
+// 重新同步 RAG
+export const resyncRag = async (
+  docId: number,
+  opts?: KbOpts
+): Promise<{ success: boolean; parsed_ids?: string[]; error?: string }> => {
+  const u = withKb(toURL(`/api/docs/${docId}/ragflow/resync`), opts?.kb);
+  return safeFetch(u.toString(), { method: 'POST' });
+};
+
+// 取得 RAG 文件列表
+export const fetchRagDocs = async (q?: string, opts?: KbOpts & { limit?: number }): Promise<RagDocItem[]> => {
+  const u = withKb(toURL('/api/ragflow/docs'), opts?.kb);
+  if (q) u.searchParams.set('q', q);
+  if (opts?.limit) u.searchParams.set('limit', String(opts.limit));
+  return safeFetch<RagDocItem[]>(u.toString());
+};
+
+// 其他 API 函數...
+
+class HttpError extends Error {
+  status: number;
+  statusText: string;
+  rawBody: string;
+  json?: any;
+  constructor(status: number, statusText: string, rawBody: string) {
+    super(`${status} ${statusText}`);
+    this.status = status;
+    this.statusText = statusText;
+    this.rawBody = rawBody;
+  }
+}
+
+function withKb(u: URL, kb?: string): URL {
+  if (kb) u.searchParams.set("kb", kb);
+  return u;
+}
+
+function ensureKbInForm(fd: FormData, kb?: string) {
+  if (kb && !fd.has("kb")) fd.append("kb", kb);
+}
+
+function toURL(path: string): URL {
+  // 支援 API_BASE 為 ""（相對路徑，走 Vite 代理）、"/prefix"（路徑前綴）、或 "http://host:port"（絕對）
+  return new URL(`${API_BASE}${path}`, location.origin);
+}
+
+function buildErrorMessage(status: number, statusText: string, text: string, j?: any) {
+  const lines: string[] = [
+    `HTTP: ${status} ${statusText}`,
+    j?.error_type ? `error_type: ${j.error_type}` : "",
+    j?.error_message ? `error_message: ${j.error_message}` : "",
+    j?.error ? `error: ${j.error}` : "",
+    j?.message ? `message: ${j.message}` : "",
+    j?.http_status ? `ragflow_http_status: ${j.http_status}` : "",
+    j?.http_body
+      ? `ragflow_http_body:\n${
+          typeof j.http_body === "string" ? j.http_body : JSON.stringify(j.http_body, null, 2)
+        }`
+      : "",
+    j?.traceback ? `traceback:\n${j.traceback}` : "",
+  ].filter(Boolean);
+
+  if (lines.length === 1 && text) {
+    lines.push("body:", text);
+  }
+  const msg = lines.join("\n");
+  return msg.length > 5000 ? msg.slice(0, 5000) + "\n…(truncated)" : msg;
+}
+
+export async function safeFetch<T = any>(input: RequestInfo, init?: RequestInit): Promise<T> {
+  const res = await fetch(input, init);
+  const text = await res.text();
+  if (!res.ok) {
+    let j: any | undefined;
+    try {
+      j = JSON.parse(text);
+    } catch {}
+    const err = new HttpError(res.status, res.statusText, text);
+    err.json = j;
+    err.message = buildErrorMessage(res.status, res.statusText, text, j);
+    throw err;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // 回傳非 JSON（少見）時，直接回文字
+    return text as unknown as T;
+  }
+}
+
+/** ───────────────────────────── Documents ──────────────────────────────── */
+
+/** 取得文件清單（含最新版本資訊） */
+export const fetchDocs = (opts?: KbOpts): Promise<DocsListItem[]> => {
+  const u = withKb(toURL(`/api/docs`), opts?.kb);
+  return safeFetch<DocsListItem[]>(u.toString());
+}
+
+/** 上傳新文件（使用 FormData，內含檔案與欄位；可能回 207） */
+export async function uploadDoc(fd: FormData): Promise<any>;
+export async function uploadDoc(fd: FormData, opts: KbOpts): Promise<any>;
+export async function uploadDoc(fd: FormData, opts?: KbOpts): Promise<any> {
+  ensureKbInForm(fd, opts?.kb);
+  const u = toURL(`/api/docs`);
+  return safeFetch(u.toString(), {
+    method: "POST",
+    body: fd,
+  });
+}
+
+/** 刪除文件（含所有版本；後端會嘗試同步刪 RAGFlow） */
+export async function deleteDoc(docId: string | number): Promise<any>;
+export async function deleteDoc(docId: string | number, opts: KbOpts): Promise<any>;
+export async function deleteDoc(docId: string | number, opts?: KbOpts): Promise<any> {
+  const u = withKb(toURL(`/api/docs/${encodeURIComponent(String(docId))}`), opts?.kb);
+  return safeFetch(u.toString(), { method: "DELETE" });
+}
+
+/** 切換版本狀態（生效/失效） */
+export async function toggleVersion(versionId: number) {
+  const u = toURL(`/api/versions/${versionId}/toggle`);
+  return safeFetch(u.toString(), { method: "POST" });
+}
+
+/** 查詢指定文件在 RAGFlow 的解析狀態 */
+export async function getRagStatus(docId: number): Promise<RagStatus>;
+export async function getRagStatus(docId: number, opts: KbOpts): Promise<RagStatus>;
+export async function getRagStatus(docId: number, opts?: KbOpts): Promise<RagStatus> {
+  const u = withKb(toURL(`/api/docs/${docId}/ragflow`), opts?.kb);
+  return safeFetch<RagStatus>(u.toString());
+}
+
+/** 重新觸發 RAGFlow 解析 */
+export async function resyncRag(
+  docId: number
+): Promise<{ success: boolean; parsed_ids?: string[]; error?: string }>;
+export async function resyncRag(
+  docId: number,
+  opts: KbOpts
+): Promise<{ success: boolean; parsed_ids?: string[]; error?: string }>;
+export async function resyncRag(
+  docId: number,
+  opts?: KbOpts
+): Promise<{ success: boolean; parsed_ids?: string[]; error?: string }> {
+  const u = withKb(toURL(`/api/docs/${docId}/ragflow/resync`), opts?.kb);
+  return safeFetch(u.toString(), { method: "POST" });
+}
+
+/** ───────────────────────────── Files list ─────────────────────────────── */
+
+export async function fetchFiles(): Promise<FileItem[]> {
+  const u = toURL(`/api/files`);
+  return safeFetch<FileItem[]>(u.toString());
+}
+
+/** ───────────────────────────── RAGFlow docs ───────────────────────────── */
+
+export async function fetchRagDocs(q?: string): Promise<RagDocItem[]>;
+export async function fetchRagDocs(q: string | undefined, opts: KbOpts): Promise<RagDocItem[]>;
+export async function fetchRagDocs(q?: string, opts?: KbOpts): Promise<RagDocItem[]> {
+  const u = withKb(toURL(`/api/ragflow/docs`), opts?.kb);
+  if (q && q.trim()) u.searchParams.set("q", q.trim());
+  return safeFetch<RagDocItem[]>(u.toString());
+}
+
+/** 以 RAGFlow document id 刪除（若後端支援） */
+export async function deleteRagDoc(id: string | number): Promise<any>;
+export async function deleteRagDoc(id: string | number, opts: KbOpts): Promise<any>;
+export async function deleteRagDoc(id: string | number, opts?: KbOpts): Promise<any> {
+  const u = withKb(toURL(`/api/ragflow/docs/${encodeURIComponent(String(id))}`), opts?.kb);
+  return safeFetch(u.toString(), { method: "DELETE" });
+}
+
+/** 以 display_name 查找可能的匹配（完全相等） */
+export async function findRagDocsByDisplayName(name: string): Promise<any>;
+export async function findRagDocsByDisplayName(name: string, opts: KbOpts): Promise<any>;
+export async function findRagDocsByDisplayName(name: string, opts?: KbOpts): Promise<any> {
+  const u = withKb(toURL(`/api/ragflow/docs/matches`), opts?.kb);
+  u.searchParams.set("name", name);
+  return safeFetch(u.toString());
+}
+
+/** 以 display_name 刪除 */
+export async function deleteRagDocByDisplayName(name: string): Promise<any>;
+export async function deleteRagDocByDisplayName(name: string, opts: KbOpts): Promise<any>;
+export async function deleteRagDocByDisplayName(name: string, opts?: KbOpts): Promise<any> {
+  const u = withKb(toURL(`/api/ragflow/docs/by-display-name`), opts?.kb);
+  u.searchParams.set("name", name);
+  const res = await safeFetch(u.toString(), { method: "DELETE" });
+
+  // 業務檢查：沒刪到也要告知
+  if (res?.success === false) {
+    throw new Error(
+      `RAGFlow delete failed\n` +
+        (res.error_message || "") +
+        (res.http_body ? `\n${res.http_body}` : "")
+    );
+  }
+  if (Array.isArray(res?.deleted_ids) && res.deleted_ids.length === 0) {
+    const matches = res?.matches ? `\nmatches:\n${JSON.stringify(res.matches, null, 2)}` : "";
+    throw new Error(`No document deleted by display_name "${name}".${matches}`);
+  }
+  return res;
+}
+
+export async function updateRagChunking(
+  docId: number,
+  body: { chunk_method: string; parser_config?: any; reparse?: boolean },
+  opts?: { kb?: string }
+) {
+  const u = withKb(toURL(`/api/docs/${docId}/ragflow/chunking`), opts?.kb);
+  return safeFetch(u.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export type KbInfo = {
+  id: string;
+  name: string;
+  description?: string | null;
+  doc_count?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export async function fetchKbList(q?: string, limit = 200): Promise<KbInfo[]> {
+  const u = new URL(`${API_BASE}/api/ragflow/kb`, location.origin);
+  if (q && q.trim()) u.searchParams.set("q", q.trim());
+  if (limit) u.searchParams.set("limit", String(limit));
+  return safeFetch<KbInfo[]>(u.toString());
+}
+
+// 型別（如果你集中在 type.ts，也可以移到那邊）
+export type UploadRecentItem = {
+  id: number;
+  uploaded_at: string;
+  kb?: string | null;
+  doc_no?: string | null;
+  title: string;
+  display_name?: string | null;
+  rag_status: string;        // NOT_SYNCED / PENDING / SUCCESS / ERROR …
+  rag_url?: string | null;
+};
+
+// 取得最近 10 筆
+export async function fetchRecentUploads(opts?: { kb?: string }): Promise<UploadRecentItem[]> {
+  const u = new URL(`${API_BASE}/api/uploads/recent`, location.origin);
+  if (opts?.kb) u.searchParams.set("kb", opts.kb);
+  return safeFetch<UploadRecentItem[]>(u.toString());
+}
+
+// 簡化重複的 API 呼叫邏輯
+const createApiRequest = async <T>(endpoint: string, options?: RequestInit): Promise<T> => {
+  const res = await fetch(`${API_BASE}${endpoint}`, options);
+  if (!res.ok) {
+    throw new Error(`API Error: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+};
+
+export const fetchDocs = (opts?: KbOpts): Promise<DocsListItem[]> => 
+  createApiRequest('/api/docs' + (opts?.kb ? `?kb=${opts.kb}` : ''));
